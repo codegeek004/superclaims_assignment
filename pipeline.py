@@ -60,6 +60,10 @@ def parse_json_response(text: str) -> dict:
 
 
 # calling gemini llm api with creds from .env
+# all llm apis does not offer more than 5-10 requests per minute
+# To execute this pipeline you need to have a paid llm plan
+# Refer to the limits of gemini api(used in this pipeline) 
+# https://aistudio.google.com/rate-limit?timeRange=last-28-days
 llm = ChatGoogleGenerativeAI(
     model="gemini-2.0-flash",
     google_api_key=key,
