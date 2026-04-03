@@ -9,7 +9,10 @@ from langgraph.graph import StateGraph, START, END
 from decouple import config
 import os
 
-key = config('GEMINI_API_KEY')
+
+key = config('GEMINI_API_KEY', cast=str)
+
+
 # StateGraph class
 
 
@@ -21,24 +24,27 @@ class ClaimState(TypedDict):
     id_pages: list[str]
     discharge_pages: list[str]
     bill_pages: list[str]
-    id_data: dict | None
+    id_data: dict | None  # takes dict or None
     discharge_data: dict | None
     bill_data: dict | None
     final_output: dict | None
 
 
-# loading pdf to pages using fitz because it loads each page instead of full pdf
+# loading pdf to pages and converts each page to image
 
 
 def load_pdf_pages(pdf_path: str) -> list[str]:
     doc = fitz.open(pdf_path)
     pages_base64 = []
     for i, page in enumerate(doc):
-        pix = page.get_pixmap(dpi=150)
+        pix = page.get_pixmap(dpi=150)  # dpi : dots per inch(in image)
         img_bytes = pix.tobytes("png")
         encoded = base64.b64encode(img_bytes).decode("utf-8")
         pages_base64.append(encoded)
     return pages_base64
+
+
+# converts text to json
 
 
 def parse_json_response(text: str) -> dict:
@@ -58,6 +64,8 @@ llm = ChatGoogleGenerativeAI(
     model="gemini-2.0-flash",
     google_api_key=key,
 )
+
+
 # the segregator classifies the pages into 9 doc types and routes them to multiple
 # agents as per the classification
 
@@ -89,12 +97,15 @@ def segregator(state: ClaimState) -> ClaimState:
                 Reply with just the category name, nothing else. No explanation."""
             }
         ])
-
+        # sends prompt to llm
         response = llm.invoke([message])
         label = response.content.strip().lower().replace(" ", "_")
         classifications[i] = label
 
-    id_pages, discharge_pages, bill_pages = [], [], []
+    id_pages = []
+    discharge_pages = []
+    bill_pages = []
+    # classifies label for the pages
     for i, label in classifications.items():
         if label == "identity_document":
             id_pages.append(pages[i])
@@ -103,13 +114,15 @@ def segregator(state: ClaimState) -> ClaimState:
         elif label == "itemized_bill":
             bill_pages.append(pages[i])
 
-
     return {
         "page_classifications": classifications,
         "id_pages": id_pages,
         "discharge_pages": discharge_pages,
         "bill_pages": bill_pages
     }
+
+
+# extracts identity information from pages
 
 
 def id_agent(state: ClaimState) -> ClaimState:
@@ -144,6 +157,9 @@ def id_agent(state: ClaimState) -> ClaimState:
     return {"id_data": data}
 
 
+# extracts discharge summary from document
+
+
 def discharge_agent(state: ClaimState) -> ClaimState:
     if not state["discharge_pages"]:
         return {"discharge_data": {}}
@@ -174,6 +190,9 @@ def discharge_agent(state: ClaimState) -> ClaimState:
     response = llm.invoke([HumanMessage(content=content)])
     data = parse_json_response(response.content)
     return {"discharge_data": data}
+
+
+# Extracts billing information from document
 
 
 def bill_agent(state: ClaimState) -> ClaimState:
@@ -208,6 +227,9 @@ def bill_agent(state: ClaimState) -> ClaimState:
     return {"bill_data": data}
 
 
+# aggregates results extracted from all the document categories
+
+
 def aggregator(state: ClaimState) -> ClaimState:
     final = {
         "claim_id": state["claim_id"],
@@ -221,6 +243,8 @@ def aggregator(state: ClaimState) -> ClaimState:
     }
     return {"final_output": final}
 
+
+# builds a pipeline to execute segregator, processing and aggregation functions
 
 
 def build_pipeline():
