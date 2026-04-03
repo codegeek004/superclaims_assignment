@@ -1,15 +1,17 @@
 import os
-import tempfile
+import tempfile  # used for storing pdfs in a directory temporarily
 from fastapi import FastAPI, UploadFile, File, Form
-from dotenv import load_dotenv
-from pipeline import build_pipeline, load_pdf_pages  
+from pipeline import build_pipeline, load_pdf_pages
 from decouple import config
 import uvicorn
 import uuid
 
 
 api = FastAPI()
-langgraph_app = build_pipeline()  
+langgraph_app = build_pipeline()
+
+
+# function to post pdf contents to the pipeline
 
 
 @api.post("/api/process")
@@ -17,8 +19,10 @@ async def process_claim(
     claim_id: str = Form(default=None),
     file: UploadFile = File(...)
 ):
+    # auto generates claim_id if not provided explicitly
     if not claim_id:
         claim_id = f"CLM_{uuid.uuid4().hex[:8].upper()}"
+    # creates temporary directory to store pdf contents and deletes after getting response
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         contents = await file.read()
         tmp.write(contents)
@@ -26,6 +30,7 @@ async def process_claim(
 
     try:
         pages = load_pdf_pages(tmp_path)
+        # this builds the pipeline and calls the segregator function defined in pipeline
         result = langgraph_app.invoke({
             "claim_id": claim_id,
             "pdf_path": tmp_path,
@@ -39,7 +44,10 @@ async def process_claim(
             "bill_data": None,
             "final_output": None
         })
+    except Exception as e:
+        print(f"Exception raised: {e}")
     finally:
+        # removes pdf content after execution
         os.remove(tmp_path)
 
     return result["final_output"]
