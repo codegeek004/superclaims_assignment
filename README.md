@@ -4,11 +4,11 @@ A FastAPI service that processes PDF insurance claims using LangGraph to orchest
 
 ## Features
 
-- 🗂️ **Page-level routing** - Each page is classified individually before any extraction happens
-- 🤖 **Multi-agent extraction** - Specialist agents for identity, discharge, and billing data
-- 🔒 **Strict isolation** - Agents only see pages assigned to them, enforced at the data level
-- ⚡ **Vision-powered** - Gemini 2.0 Flash processes scanned/image-protected PDFs
-- 🧩 **Modular** - FastAPI and LangGraph layers are fully decoupled
+- **Page-level routing** - Each page is classified individually before any extraction happens
+- **Multi-agent extraction** - Specialist agents for identity, discharge, and billing data
+- **Strict isolation** - Agents only see pages assigned to them, enforced at the data level
+- **Vision-powered** - Gemini 2.0 Flash processes scanned/image-protected PDFs
+- **Modular** - FastAPI and LangGraph layers are fully decoupled
 
 ## Tech Stack
 
@@ -18,26 +18,45 @@ A FastAPI service that processes PDF insurance claims using LangGraph to orchest
 - **PDF Processing**: PyMuPDF (fitz)
 - **Environment**: python-dotenv
 
+## Deployment
+
+This service is deployed on two platforms:
+
+### Render
+The API is hosted at:
+```
+https://superclaims-assignment-nexv.onrender.com/api/process
+```
+
+### GCP (Google Cloud Platform)
+The API is also deployed on GCP with Nginx as a reverse proxy, Gunicorn as the WSGI server, and an SSL certificate issued by Let's Encrypt:
+```
+https://codemos-services.co.in/
+```
+
+
 ## Getting Started
 
 ### Prerequisites
 
 - Python 3.10+
-- A free Gemini API key from [aistudio.google.com](https://aistudio.google.com) — no credit card needed
-- Use `gemini-2.0-flash` specifically — the free tier gives 15 RPM which is enough. `gemini-2.5-pro` is only 5 RPM and will hit limits immediately on multi-page PDFs
+- A Gemini API key from [aistudio.google.com](https://aistudio.google.com)
+- Use `gemini-2.0-flash` specifically — both Flash and Pro are capped at 5 RPM on the free tier, meaning almost any real PDF will hit rate limits. A paid plan is recommended for anything beyond testing.
+
+> **API Rate Limits:** Most LLM APIs (including Gemini free tier) cap requests at 5-10 RPM. This pipeline makes `num_pages + 3` LLM calls per document. For multi-page PDFs on a free tier key, you may hit rate limits. See the [Rate Limits](#rate-limits) section below.
 
 ### Installation
 
 ##### Clone the repository
 ```bash
-git clone <repo-url>
-cd project
+git clone https://github.com/codegeek004/superclaims_assignment.git
+cd superclaims_assignment
 ```
 
 ##### Create virtual environment
 ```bash
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+source venv/bin/activate 
 ```
 
 ##### Install dependencies
@@ -45,18 +64,17 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-##### Add your API key
+##### Add your API key in .env
 ```bash
-# .env
 GOOGLE_API_KEY=your_key_here
 ```
 
 ##### Start the server
 ```bash
-uvicorn main:api --reload
+python app.py
 ```
 
-Server runs at `http://localhost:8000`
+Server runs at `http://127.0.0.1:8000`
 
 ## Architecture & System Design
 
@@ -64,68 +82,86 @@ Server runs at `http://localhost:8000`
 
 ```
 project/
-├── main.py          # FastAPI — HTTP layer only, no AI logic
-├── pipeline.py      # LangGraph pipeline, agents, and state
-├── .env
+├── app.py         --> FastAPI api
+├── pipeline.py     --> LangGraph pipeline, agents, and state
+├── .env            --> API key 
 └── requirements.txt
 ```
 
-`main.py` doesn't know anything about LangGraph or Gemini. It receives the file, calls `invoke()`, and returns the result. `pipeline.py` can be tested completely independently without running the server.
+`app.py` doesn't know anything about LangGraph or Gemini. It receives the file, calls `invoke()`, and returns the result. `pipeline.py` can be tested completely independently without running the server.
 
 ### How it works
 
 1. Client sends a `POST /api/process` request with the PDF and an optional `claim_id`
 2. FastAPI saves the uploaded PDF to a temporary file on disk
 3. fitz opens the temp file and converts every page into a base64-encoded PNG at 150 DPI
-4. The LangGraph pipeline starts with the `ClaimState` object initialized — this is the shared state that every node reads from and writes to
+4. The LangGraph pipeline starts with the `ClaimState` object initialized, this is the shared state that every node reads from and writes to
 5. The **Segregator** runs first. It sends each page image to Gemini one at a time and asks it to classify the page into one of 9 document types
-6. After classifying all pages, the Segregator splits the page images into three separate lists — `id_pages`, `discharge_pages`, and `bill_pages` — based on the classifications
+6. After classifying all pages, the Segregator splits the page images into three separate lists, `id_pages`, `discharge_pages`, and `bill_pages` based on the classifications
 7. The **ID Agent**, **Discharge Agent**, and **Bill Agent** run next. Each one receives only its own list of pages, sends them to Gemini with an extraction prompt, and writes the result back to state
-8. The **Aggregator** runs last. No LLM call here — it just merges the three agent outputs into a single JSON object
+8. The **Aggregator** runs last. No LLM call here, it just merges the three agent outputs into a single JSON object
 9. FastAPI reads `final_output` from the state and returns it as the HTTP response
 10. The temp file is deleted regardless of success or failure
 
 ### Why fitz?
 
-LangChain's `HumanMessage` content blocks only support `text` and `image_url` — there's no way to pass raw PDF bytes through it to Gemini. fitz renders each page as a PNG at 150 DPI, base64-encodes it, and sends it as an image. Since the target PDF is image-protected (scanned pages, no text layer), this is the right approach regardless.
+LangChain's `HumanMessage` content blocks only support `text` and `image_url`, there's no way to pass raw PDF bytes through it to Gemini. fitz renders each page as a PNG at 150 DPI, base64-encodes it, and sends it as an image. Since the target PDF is image-protected (scanned pages, no text layer), this is the right approach regardless.
 
 ### Page Routing
 
-The key design decision is that page routing is enforced at the data level, not via prompting. The segregator splits page images into three separate lists. Each agent only receives its own list — it cannot see pages outside its bucket.
+The key design decision is that page routing is enforced at the data level, not via prompting. The segregator splits page images into three separate lists. Each agent only receives its own list, it cannot see pages outside its bucket.
 
 ```
-Page 0 → "claim_forms"        classified, no agent processes it
-Page 1 → "identity_document"  id_pages[]        → ID Agent only
-Page 2 → "discharge_summary"  discharge_pages[] → Discharge Agent only
-Page 3 → "itemized_bill"      bill_pages[]      → Bill Agent only
-Page 4 → "prescription"       classified, no agent processes it
+Page 0 --> "claim_forms"        classified, no agent processes it
+Page 1 --> "identity_document"  id_pages[]        --> ID Agent only
+Page 2 --> "discharge_summary"  discharge_pages[] --> Discharge Agent only
+Page 3 --> "itemized_bill"      bill_pages[]      --> Bill Agent only
+Page 4 --> "prescription"       classified, no agent processes it
 ```
 
 ### LangGraph Nodes
 
-**Segregator** — classifies every page into one of 9 types using Gemini vision. Makes 1 LLM call per page. Splits results into three page buckets.
+**Segregator** - classifies every page into one of 9 types using Gemini vision. Makes 1 LLM call per page. Splits results into three page buckets.
 
 Supported types: `claim_forms` `cheque_or_bank_details` `identity_document` `itemized_bill` `discharge_summary` `prescription` `investigation_report` `cash_receipt` `other`
 
-**ID Agent** — receives only identity document pages. Extracts `patient_name`, `dob`, `id_number`, `policy_number`, `address`, `phone`, `email`. 1 LLM call.
+**ID Agent** - receives only identity document pages. Extracts `patient_name`, `dob`, `id_number`, `policy_number`, `address`, `phone`, `email`. 1 LLM call.
 
-**Discharge Agent** — receives only discharge summary pages. Extracts `diagnosis`, `admit_date`, `discharge_date`, `physician_name`, `hospital_name`, `treatment_summary`, `follow_up_instructions`. 1 LLM call.
+**Discharge Agent** - receives only discharge summary pages. Extracts `diagnosis`, `admit_date`, `discharge_date`, `physician_name`, `hospital_name`, `treatment_summary`, `follow_up_instructions`. 1 LLM call.
 
-**Bill Agent** — receives only itemized bill pages. Extracts all line items with costs and totals. 1 LLM call.
+**Bill Agent** - receives only itemized bill pages. Extracts all line items with costs and totals. 1 LLM call.
 
-**Aggregator** — no LLM call. Pure Python. Merges all agent outputs into the final JSON.
+**Aggregator** - no LLM call. Pure Python. Merges all agent outputs into the final JSON.
 
 ### LLM Calls Per Request
 
 ```
-segregator  →  1 per page
-id_agent    →  1
-discharge   →  1
-bill_agent  →  1
-aggregator  →  0
+segregator  -->  1 per page
+id_agent    -->  1
+discharge   -->  1
+bill_agent  -->  1
+aggregator  -->  0
 
 total  =  num_pages + 3
 ```
+
+## Rate Limits
+
+> This section is important before running the pipeline in production or on large documents.
+
+Most LLM providers cap free-tier usage at **5-10 requests per minute (RPM)**. This pipeline makes `num_pages + 3` LLM calls per document, so a 10-page PDF requires 13 sequential calls.
+
+**Gemini free tier limits:**
+- `gemini-2.0-flash`: 5 RPM
+
+
+With only 5 RPM available, even a 2-page PDF requires 5 LLM calls, which immediately saturates the limit.
+
+**What this means in practice:**
+- Almost any real world PDF will hit the rate limit mid-pipeline on a free tier key
+- For production workloads or documents with more than 1–2 pages, a **paid Gemini API plan** is required
+
+To check current Gemini API limits: [ai.google.dev/gemini-api/docs/rate-limits](https://ai.google.dev/gemini-api/docs/rate-limits)
 
 ## API
 
@@ -134,7 +170,7 @@ total  =  num_pages + 3
 | Field | Type | Required |
 |-------|------|----------|
 | file | PDF | Yes |
-| claim_id | string | No — autogenerated if missing |
+| claim_id | string | No(autogenerated if missing) |
 
 `claim_id` is autogenerated as `CLM_XXXXXXXX` if not provided.
 
@@ -186,18 +222,33 @@ total  =  num_pages + 3
 
 ## Usage
 
+### Local
+
 1. Start the server with `uvicorn main:api --reload`
-2. Open `http://localhost:8000/docs` for the interactive Swagger UI
+2. Open `http://127.0.0.1:8000/docs` for the interactive Swagger UI
 3. Upload your PDF and optionally provide a `claim_id`
 4. Hit Execute and get the extracted JSON back
 
 ```bash
-# curl
-curl -X POST "http://localhost:8000/api/process" \
+# curl --> local
+curl -X POST "http://127.0.0.1:8000/api/process" \
   -F "file=@claim.pdf"
 
-# with custom claim id
-curl -X POST "http://localhost:8000/api/process" \
+# with custom claim id - local
+curl -X POST "http://127.0.0.1:8000/api/process" \
+  -F "claim_id=CLM001" \
+  -F "file=@claim.pdf"
+```
+
+### Render (Cloud)
+
+```bash
+# curl --> Render
+curl -X POST "https://superclaims-assignment-nexv.onrender.com/api/process" \
+  -F "file=@claim.pdf"
+
+# with custom claim id --> Render
+curl -X POST "https://superclaims-assignment-nexv.onrender.com/api/process" \
   -F "claim_id=CLM001" \
   -F "file=@claim.pdf"
 ```
@@ -206,11 +257,38 @@ curl -X POST "http://localhost:8000/api/process" \
 import requests
 
 with open("claim.pdf", "rb") as f:
-    r = requests.post("http://localhost:8000/api/process", files={"file": f})
+    r = requests.post(
+        "https://superclaims-assignment-nexv.onrender.com/api/process",
+        files={"file": f}
+    )
 
 print(r.json())
 ```
 
+### GCP / codemos-services.co.in (Cloud)
+
+```bash
+# curl --> GCP
+curl -X POST "https://codemos-services.co.in/api/process" \
+  -F "file=@claim.pdf"
+
+# with custom claim id --> GCP
+curl -X POST "https://codemos-services.co.in/api/process" \
+  -F "claim_id=CLM001" \
+  -F "file=@claim.pdf"
+```
+
+```python
+import requests
+
+with open("claim.pdf", "rb") as f:
+    r = requests.post(
+        "https://codemos-services.co.in/api/process",
+        files={"file": f}
+    )
+
+print(r.json())
+```
 
 ## Acknowledgements
 
