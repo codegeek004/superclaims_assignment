@@ -4,17 +4,21 @@ from fastapi import FastAPI, UploadFile, File, Form
 from dotenv import load_dotenv
 from pipeline import build_pipeline, load_pdf_pages  
 from decouple import config
-load_dotenv()  
 import uvicorn
+import uuid
+
+
 api = FastAPI()
 langgraph_app = build_pipeline()  
 
 
 @api.post("/api/process")
 async def process_claim(
-    claim_id: str = Form(...),
+    claim_id: str = Form(default=None),
     file: UploadFile = File(...)
 ):
+    if not claim_id:
+        claim_id = f"CLM_{uuid.uuid4().hex[:8].upper()}"
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
         contents = await file.read()
         tmp.write(contents)
