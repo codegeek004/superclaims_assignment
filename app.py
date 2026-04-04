@@ -49,7 +49,6 @@ async def process_claim(
     finally:
         # removes pdf content after execution
         os.remove(tmp_path)
-
     return result["final_output"]
 
 
