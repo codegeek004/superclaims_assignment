@@ -31,7 +31,7 @@ https://superclaims-assignment-nexv.onrender.com/api/process
 ### GCP (Google Cloud Platform)
 The API is also deployed on GCP with Nginx as a reverse proxy, Gunicorn as the WSGI server, and an SSL certificate issued by Let's Encrypt:
 ```
-https://codemos-services.co.in/
+https://codemos-services.co.in/api/process
 ```
 
 
@@ -66,7 +66,7 @@ pip install -r requirements.txt
 
 ##### Add your API key in .env
 ```bash
-GOOGLE_API_KEY=your_key_here
+OPENROUTER_API_KEY=your_key_here
 ```
 
 ##### Start the server
@@ -145,23 +145,6 @@ aggregator  -->  0
 total  =  num_pages + 3
 ```
 
-## Rate Limits
-
-> This section is important before running the pipeline in production or on large documents.
-
-Most LLM providers cap free-tier usage at **5-10 requests per minute (RPM)**. This pipeline makes `num_pages + 3` LLM calls per document, so a 10-page PDF requires 13 sequential calls.
-
-**Gemini free tier limits:**
-- `gemini-2.0-flash`: 5 RPM
-
-
-With only 5 RPM available, even a 2-page PDF requires 5 LLM calls, which immediately saturates the limit.
-
-**What this means in practice:**
-- Almost any real world PDF will hit the rate limit mid-pipeline on a free tier key
-- For production workloads or documents with more than 1–2 pages, a **paid Gemini API plan** is required
-
-To check current Gemini API limits: [ai.google.dev/gemini-api/docs/rate-limits](https://ai.google.dev/gemini-api/docs/rate-limits)
 
 ## API
 
