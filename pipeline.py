@@ -3,14 +3,14 @@ import json
 import base64
 import fitz
 from typing import TypedDict
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, START, END
 from decouple import config
 import os
+import time
 
-
-key = config('GEMINI_API_KEY', cast=str)
+key = config('OPENROUTER_API_KEY', cast=str)
 
 
 # StateGraph class
@@ -62,11 +62,13 @@ def parse_json_response(text: str) -> dict:
 # calling gemini llm api with creds from .env
 # all llm apis does not offer more than 5-10 requests per minute
 # To execute this pipeline you need to have a paid llm plan
-# Refer to the limits of gemini api(used in this pipeline) 
+# Refer to the limits of gemini api(used in this pipeline)
 # https://aistudio.google.com/rate-limit?timeRange=last-28-days
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash",
-    google_api_key=key,
+llm = ChatOpenAI(
+    model='openai/gpt-4o-mini',
+    api_key=config('OPENROUTER_API_KEY', cast=str),
+    base_url="https://openrouter.ai/api/v1",
+    temperature=0
 )
 
 
@@ -75,34 +77,39 @@ llm = ChatGoogleGenerativeAI(
 
 
 def segregator(state: ClaimState) -> ClaimState:
+    print('inside segregator')
     pages = state["pages_base64"]
     classifications = {}
 
     for i, page_b64 in enumerate(pages):
-        message = HumanMessage(content=[
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{page_b64}"}
-            },
-            {
-                "type": "text",
-                "text": """You are a medical claims document classifier.
-                Classify this page into exactly one of these categories:
-                - claim_forms
-                - cheque_or_bank_details
-                - identity_document
-                - itemized_bill
-                - discharge_summary
-                - prescription
-                - investigation_report
-                - cash_receipt
-                - other
+        print(i)
+        try:
+            message = HumanMessage(content=[
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{page_b64}"}
+                },
+                {
+                    "type": "text",
+                    "text": """You are a medical claims document classifier.
+                    Classify this page into exactly one of these categories:
+                    - claim_forms
+                    - cheque_or_bank_details
+                    - identity_document
+                    - itemized_bill
+                    - discharge_summary
+                    - prescription
+                    - investigation_report
+                    - cash_receipt
+                    - other
 
-                Reply with just the category name, nothing else. No explanation."""
-            }
-        ])
-        # sends prompt to llm
-        response = llm.invoke([message])
+                    Reply with just the category name, nothing else. No explanation."""
+                }
+            ])
+            # sends prompt to llm
+            response = llm.invoke([message])
+        except Exception as e:
+            print("Exception in segregator", e)
         label = response.content.strip().lower().replace(" ", "_")
         classifications[i] = label
 
@@ -156,7 +163,10 @@ def id_agent(state: ClaimState) -> ClaimState:
         Return only the JSON object, no extra text or markdown."""
     })
 
-    response = llm.invoke([HumanMessage(content=content)])
+    try:
+        response = llm.invoke([HumanMessage(content=content)])
+    except Exception as e:
+        print(f"Exception in id_agent : {e}")
     data = parse_json_response(response.content)
     return {"id_data": data}
 
@@ -191,7 +201,10 @@ def discharge_agent(state: ClaimState) -> ClaimState:
         Return only the JSON object, no extra text or markdown."""
     })
 
-    response = llm.invoke([HumanMessage(content=content)])
+    try:
+        response = llm.invoke([HumanMessage(content=content)])
+    except Exception as e:
+        print(f"Exception in discharge_agent : {e}")
     data = parse_json_response(response.content)
     return {"discharge_data": data}
 
@@ -226,7 +239,10 @@ def bill_agent(state: ClaimState) -> ClaimState:
         Return only the JSON object, no extra text or markdown."""
     })
 
-    response = llm.invoke([HumanMessage(content=content)])
+    try:
+        response = llm.invoke([HumanMessage(content=content)])
+    except Exception as e:
+        print("Exception in bill_agent", e)
     data = parse_json_response(response.content)
     return {"bill_data": data}
 
